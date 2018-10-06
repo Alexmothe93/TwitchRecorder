@@ -1,0 +1,16 @@
+# Config file for Twitch Recorder
+
+# General config
+;oauth-token=
+;streamer=
+refresh=30
+mode=recorder
+
+# Recorder config
+ffmpeg=C:\ffmpeg\bin\ffmpeg.exe
+path=C:\TwitchRecorder
+quality=best
+
+# Watcher config
+;ip-address=
+;mac-address=
