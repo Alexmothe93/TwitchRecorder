@@ -13,44 +13,70 @@ class TwitchRecorder:
 
 	def __init__(self):
 		self.clientID = "jzkbprff40iqj646a697cyrvl0zt2m6" #Client ID of Twitch website
+		self.version = "0.1" #To increment to each modification
 	
 	def run(self):
-		# path to recorded stream
-		self.recordedPath = os.path.join(self.rootPath, "recorded", self.streamer)
-
-		# path to finished video, errors removed
-		self.processedPath = os.path.join(self.rootPath, "processed", self.streamer)
-
-		# create directory for recordedPath and processedPath if not exist
-		if(os.path.isdir(self.recordedPath) is False):
-			os.makedirs(self.recordedPath)
-		if(os.path.isdir(self.processedPath) is False):
-			os.makedirs(self.processedPath)
-
 		# make sure the interval to check user availability is not less than 15 seconds
 		if(self.refresh < 15):
 			print("Check interval should not be lower than 15 seconds, set check interval to 15 seconds.")
 			self.refresh = 15
 		
-		# fix videos from previous recording session
-		try:
-			videoList = [f for f in os.listdir(self.recordedPath) if os.path.isfile(os.path.join(self.recordedPath, f))]
-			if(len(videoList) > 0):
-				print('Fixing previously recorded files.')
-			for f in videoList:
-				recordedFilename = os.path.join(self.recordedPath, f)
-				print('Fixing ' + recordedFilename + '.')
-				try:
-					subprocess.call([self.ffmpegPath, '-err_detect', 'ignore_err', '-i', recordedFilename, '-c', 'copy', os.path.join(self.processedPath,f)])
-					os.remove(recordedFilename)
-				except Exception as e:
-					print(e)
-		except Exception as e:
-			print(e)
+		if self.mode == "recorder":
+			self.record()
+		elif self.mode == "watcher":
+			self.watch()
+		else:
+			print("Mode not recognized, exiting.")
 
-		print("Checking for", self.streamer, "every", self.refresh, "seconds. Record with", self.quality, "quality.")
+	def record(self):
+		# path to recording stream
+		self.recordingPath = os.path.join(self.rootPath, "recording")
+
+		# path to recorded stream
+		self.recordedPath = os.path.join(self.rootPath, "recorded")
+
+		# path to finished video, errors removed
+		self.processedPath = os.path.join(self.rootPath, "processed")
+
+		# create directory for recordedPath and processedPath if not exist
+		if(os.path.isdir(self.recordingPath) is False):
+			os.makedirs(self.recordingPath)
+		if(os.path.isdir(self.recordedPath) is False):
+			os.makedirs(self.recordedPath)
+
+		if self.fixVideos:
+			if(os.path.isdir(self.processedPath) is False):
+				os.makedirs(self.processedPath)
+			# fix videos from previous recording session
+			try:
+				videoList = [f for f in os.listdir(self.recordedPath) if os.path.isfile(os.path.join(self.recordedPath, f))]
+				if(len(videoList) > 0):
+					print('Fixing previously recorded files.')
+				for f in videoList:
+					recordedFilename = os.path.join(self.recordedPath, f)
+					print('Fixing ' + recordedFilename + '.')
+					try:
+						subprocess.call([self.ffmpegPath, '-err_detect', 'ignore_err', '-i', recordedFilename, '-c', 'copy', os.path.join(self.processedPath,f)])
+						os.remove(recordedFilename)
+					except Exception as e:
+						print(e)
+			except Exception as e:
+				print(e)
+
+		print(self.version, "- Checking for", self.streamer, "every", self.refresh, "seconds. Record with", self.quality, "quality.")
 		self.loopcheck()
 
+	def watch(self):
+		while True:
+			status, info = self.checkStreamer()
+			if status == 0:
+				print("Streamer is online, checking if recorder is alive...")
+				if self.recorderAlive():
+					print("Recorder is alive, waiting 10 minutes.")
+					time.sleep(600)
+				else:
+					self.wakeRecorder()
+		
 	def recorderAlive(self):
 		if os.system("ping -c 1 " + self.recorderIPAddress) == 0:
 			return True
@@ -60,11 +86,11 @@ class TwitchRecorder:
 	def wakeRecorder(self):
 		print("Wake recorder...")
 		subprocess.call(["wakeonlan", self.recorderMACAddress])
-		while recorderAlive(self) == False:
+		while self.recorderAlive() == False:
 			print("Waiting for the recorder to wake up...")
 		print("The recorder is awake.")
 		
-	def checkUser(self):
+	def checkStreamer(self):
 		# 0: online, 
 		# 1: offline, 
 		# 2: not found, 
@@ -89,7 +115,7 @@ class TwitchRecorder:
 
 	def loopcheck(self):
 		while True:
-			status, info = self.checkUser()
+			status, info = self.checkStreamer()
 			if status == 2:
 				print("Streamer not found.")
 				time.sleep(self.refresh)
@@ -97,31 +123,38 @@ class TwitchRecorder:
 				print(datetime.datetime.now().strftime("%Hh%Mm%Ss")," ","unexpected error. will try again in 15 seconds.")
 				time.sleep(15)
 			elif status == 1:
-				print(self.streamer, "currently offline, checking again in", self.refresh, "seconds.")
+				print(self.version, "-", self.streamer, "currently offline, checking again in", self.refresh, "seconds.")
 				time.sleep(self.refresh)
 			elif status == 0:
 				print(self.streamer, "online. Stream recording in session.")
-				filename = self.streamer + " - " + datetime.datetime.now().strftime("%Y-%m-%d %Hh%Mm%Ss") + " - " + (info['stream']).get("channel").get("status") + ".mp4"
+				filename = datetime.datetime.now().strftime("%Y-%m-%d %Hh%Mm%Ss") + " - " + self.streamer + " - " + (info['stream']).get("channel").get("status") + ".mp4"
 				
-				# clean filename from unecessary characters
+				# clean filename from unnecessary characters
 				filename = "".join(x for x in filename if x.isalnum() or x in [" ", "-", "_", "."])
 				
-				recordedFilename = os.path.join(self.recordedPath, filename)
+				recordingFilename = os.path.join(self.recordingPath, filename)
 				
 				# start streamlink process
-				subprocess.call(["streamlink", "--twitch-oauth-token", self.OAuthToken, "twitch.tv/" + self.streamer, self.quality, "-o", recordedFilename])
+				subprocess.call(["streamlink", "--twitch-disable-hosting", "--twitch-oauth-token", self.OAuthToken, "twitch.tv/" + self.streamer, self.quality, "-o", recordingFilename])
 
-				print("Recording stream is done. Fixing video file.")
-				if(os.path.exists(recordedFilename) is True):
-					try:
-						subprocess.call([self.ffmpegPath, '-err_detect', 'ignore_err', '-i', recordedFilename, '-c', 'copy', os.path.join(self.processedPath, filename)])
-						os.remove(recordedFilename)
-					except Exception as e:
-						print(e)
-				else:
-					print("Skip fixing. File not found.")
-					
-				print("Fixing is done. Going back to checking..")
+				print("Recording stream is done.")
+				print("Moving file...")
+				try:
+					os.rename(recordingFilename, os.path.join(self.recordedPath, filename))
+				except:
+					print("Error when moving file.")
+				if self.fixVideos:
+					print("Fixing video file.")
+					if(os.path.exists(recordedFilename) is True):
+						try:
+							subprocess.call([self.ffmpegPath, '-err_detect', 'ignore_err', '-i', recordedFilename, '-c', 'copy', os.path.join(self.processedPath, filename)])
+							os.remove(recordedFilename)
+						except Exception as e:
+							print(e)
+					else:
+						print("Skip fixing. File not found.")
+					print("Fixing is done.")
+				print("Going back to checking...")
 				time.sleep(self.refresh)
 
 def main(argv):
@@ -131,8 +164,9 @@ def main(argv):
 	args.add("-c", "--config", dest='config_file', default='twitch-recorder.conf', type=str)
 	args.add("-o", "--oauth-token", help="OAuth Token from your Twitch account.")
 	args.add("-s", "--streamer", default=None, help="Indicate the streamer to watch.")
-	args.add("-r", "--refresh", help="Time between 2 checks.")
+	args.add("-r", "--refresh", help="Time between 2 checks.", type=int)
 	args.add("-p", "--path", help="Path to save the records.")
+	args.add("-fix", "--fix-videos", action='store_true', default=False, help="Fix videos with ffmpeg.")
 	args.add("-f", "--ffmpeg", help="Path to the ffmpeg binary.")
 	args.add("-i", "--ip-address", help="Recorder IP address.")
 	args.add("-ma", "--mac-address", help="Recorder MAC address.")
@@ -145,20 +179,23 @@ def main(argv):
 	print(args.format_help())
 	print("----------")
 	print(args.format_values())
+	print("----------")
+	print("Version:", twitchRecorder.version)
 	
 	while options.streamer == None or options.streamer == "":
 		options.streamer = input("Please specify the streamer to watch: ")
 	twitchRecorder.streamer = options.streamer
 
-	twitchRecorder.OAuthToken = options.oauth-token
+	twitchRecorder.OAuthToken = options.oauth_token
 	twitchRecorder.refresh = options.refresh
 	twitchRecorder.mode = options.mode
 	twitchRecorder.streamer = options.streamer
 	twitchRecorder.quality = options.quality
+	twitchRecorder.fixVideos = options.fix_videos
 	twitchRecorder.ffmpegPath = options.ffmpeg
 	twitchRecorder.rootPath = options.path
-	twitchRecorder.recorderIPAddress = options.ip-address
-	twitchRecorder.recorderMACAddress = options.mac-address
+	twitchRecorder.recorderIPAddress = options.ip_address
+	twitchRecorder.recorderMACAddress = options.mac_address
 
 	twitchRecorder.run()
 
