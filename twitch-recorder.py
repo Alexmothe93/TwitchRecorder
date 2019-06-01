@@ -1,4 +1,7 @@
 # Based on https://www.junian.net/python-record-twitch/, itself based from https://slicktechies.com/how-to-watchrecord-twitch-streams-using-livestreamer/
+#
+# Changelog
+# Version 0.2 : Completing watch()
 
 import requests
 import os
@@ -13,7 +16,7 @@ class TwitchRecorder:
 
 	def __init__(self):
 		self.clientID = "jzkbprff40iqj646a697cyrvl0zt2m6" #Client ID of Twitch website
-		self.version = "0.1" #To increment to each modification
+		self.version = "0.2" #To increment to each modification
 	
 	def run(self):
 		# make sure the interval to check user availability is not less than 15 seconds
@@ -76,6 +79,15 @@ class TwitchRecorder:
 					time.sleep(600)
 				else:
 					self.wakeRecorder()
+			elif status == 1:
+				print(self.version, "-", self.streamer, "currently offline, checking again in", self.refresh, "seconds.")
+				time.sleep(self.refresh)
+			elif status == 2:
+				print("Streamer not found.")
+				time.sleep(self.refresh)
+			else:
+				print(datetime.datetime.now().strftime("%Hh%Mm%Ss")," ","unexpected error. will try again in 15 seconds.")
+				time.sleep(15)
 		
 	def recorderAlive(self):
 		if os.system("ping -c 1 " + self.recorderIPAddress) == 0:
