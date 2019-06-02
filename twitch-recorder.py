@@ -1,7 +1,8 @@
 # Based on https://www.junian.net/python-record-twitch/, itself based from https://slicktechies.com/how-to-watchrecord-twitch-streams-using-livestreamer/
 #
 # Changelog
-# Version 0.2 : Completing watch()
+# Version 0.2 : Complete watch()
+# Version 0.3 : Change watch() to check recorder before streamer, fix config file argument, less verbosity
 
 import requests
 import os
@@ -16,7 +17,7 @@ class TwitchRecorder:
 
 	def __init__(self):
 		self.clientID = "jzkbprff40iqj646a697cyrvl0zt2m6" #Client ID of Twitch website
-		self.version = "0.2" #To increment to each modification
+		self.version = "0.3" #To increment to each modification
 	
 	def run(self):
 		# make sure the interval to check user availability is not less than 15 seconds
@@ -71,26 +72,27 @@ class TwitchRecorder:
 
 	def watch(self):
 		while True:
-			status, info = self.checkStreamer()
-			if status == 0:
-				print("Streamer is online, checking if recorder is alive...")
-				if self.recorderAlive():
-					print("Recorder is alive, waiting 10 minutes.")
-					time.sleep(600)
-				else:
-					self.wakeRecorder()
-			elif status == 1:
-				print(self.version, "-", self.streamer, "currently offline, checking again in", self.refresh, "seconds.")
-				time.sleep(self.refresh)
-			elif status == 2:
-				print("Streamer not found.")
-				time.sleep(self.refresh)
+			if self.recorderAlive():
+				print(datetime.datetime.now().strftime("%Hh%Mm%Ss"),"Recorder is alive, waiting 10 minutes.")
+				time.sleep(600)
 			else:
-				print(datetime.datetime.now().strftime("%Hh%Mm%Ss")," ","unexpected error. will try again in 15 seconds.")
-				time.sleep(15)
+				print(datetime.datetime.now().strftime("%Hh%Mm%Ss"),"Recorder is sleeping, checking if ", self.streamer, " is online.")
+				status, info = self.checkStreamer()
+				if status == 0:
+					print("Streamer is online.")
+					self.wakeRecorder()
+				elif status == 1:
+					print(self.version, "-", self.streamer, "currently offline, checking again in", self.refresh, "seconds.")
+					time.sleep(self.refresh)
+				elif status == 2:
+					print("Streamer not found.")
+					time.sleep(self.refresh)
+				else:
+					print(datetime.datetime.now().strftime("%Hh%Mm%Ss")," ","unexpected error. will try again in 15 seconds.")
+					time.sleep(15)
 		
 	def recorderAlive(self):
-		if os.system("ping -c 1 " + self.recorderIPAddress) == 0:
+		if os.system("ping -c 1 " + self.recorderIPAddress + " > /dev/null") == 0:
 			return True
 		else:
 			return False
@@ -173,7 +175,7 @@ def main(argv):
 	twitchRecorder = TwitchRecorder()
 	
 	args = configargparse.ArgParser(default_config_files=['twitch-recorder.conf'], description="Record automatically Twitch streams.\r\n")
-	args.add("-c", "--config", dest='config_file', default='twitch-recorder.conf', type=str)
+	args.add("-c", "--config", dest='config_file', is_config_file=True, default='twitch-recorder.conf', type=str)
 	args.add("-o", "--oauth-token", help="OAuth Token from your Twitch account.")
 	args.add("-s", "--streamer", default=None, help="Indicate the streamer to watch.")
 	args.add("-r", "--refresh", help="Time between 2 checks.", type=int)
@@ -187,8 +189,6 @@ def main(argv):
 	options = args.parse_args()
 	
 	print(options)
-	print("----------")
-	print(args.format_help())
 	print("----------")
 	print(args.format_values())
 	print("----------")
