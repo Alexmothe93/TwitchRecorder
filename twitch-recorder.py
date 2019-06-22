@@ -3,6 +3,8 @@
 # Changelog
 # Version 0.2 : Complete watch()
 # Version 0.3 : Change watch() to check recorder before streamer, fix config file argument, less verbosity
+# Version 0.4 : Add WindowsInhibitor class to prevent Windows to sleep/hibernate when recording, used refresh argument in watch mode to set time between 2 checks when recorder is alive, fixed some syntax faults
+# Version 0.4.1 : Watcher mode: waiting in seconds, not minutes...
 
 import requests
 import os
@@ -13,11 +15,39 @@ import subprocess
 import datetime
 import configargparse
 
+class WindowsInhibitor:
+    '''Prevent OS sleep/hibernate in windows; code from:
+    https://github.com/h3llrais3r/Deluge-PreventSuspendPlus/blob/master/preventsuspendplus/core.py
+    API documentation:
+    https://msdn.microsoft.com/en-us/library/windows/desktop/aa373208(v=vs.85).aspx'''
+    ES_CONTINUOUS = 0x80000000
+    ES_SYSTEM_REQUIRED = 0x00000001
+
+    def __init__(self):
+        pass
+
+    def inhibit(self):
+        import ctypes
+        print("Preventing Windows from going to sleep")
+        ctypes.windll.kernel32.SetThreadExecutionState(
+            WindowsInhibitor.ES_CONTINUOUS | \
+            WindowsInhibitor.ES_SYSTEM_REQUIRED)
+
+    def uninhibit(self):
+        import ctypes
+        print("Allowing Windows to go to sleep")
+        ctypes.windll.kernel32.SetThreadExecutionState(
+            WindowsInhibitor.ES_CONTINUOUS)
+
 class TwitchRecorder:
 
 	def __init__(self):
 		self.clientID = "jzkbprff40iqj646a697cyrvl0zt2m6" #Client ID of Twitch website
-		self.version = "0.3" #To increment to each modification
+		self.version = "0.4" #To increment to each modification
+		self.osSleep = None
+		if os.name == 'nt':
+			self.osSleep = WindowsInhibitor()
+
 	
 	def run(self):
 		# make sure the interval to check user availability is not less than 15 seconds
@@ -73,13 +103,13 @@ class TwitchRecorder:
 	def watch(self):
 		while True:
 			if self.recorderAlive():
-				print(datetime.datetime.now().strftime("%Hh%Mm%Ss"),"Recorder is alive, waiting 10 minutes.")
-				time.sleep(600)
+				print(datetime.datetime.now().strftime("%Hh%Mm%Ss"),"Recorder is alive, waiting", self.refresh, "seconds.")
+				time.sleep(self.refresh)
 			else:
-				print(datetime.datetime.now().strftime("%Hh%Mm%Ss"),"Recorder is sleeping, checking if ", self.streamer, " is online.")
+				print(datetime.datetime.now().strftime("%Hh%Mm%Ss"),"Recorder is sleeping, checking if", self.streamer, "is online.")
 				status, info = self.checkStreamer()
 				if status == 0:
-					print("Streamer is online.")
+					print(self.streamer, "is online.")
 					self.wakeRecorder()
 				elif status == 1:
 					print(self.version, "-", self.streamer, "currently offline, checking again in", self.refresh, "seconds.")
@@ -88,7 +118,7 @@ class TwitchRecorder:
 					print("Streamer not found.")
 					time.sleep(self.refresh)
 				else:
-					print(datetime.datetime.now().strftime("%Hh%Mm%Ss")," ","unexpected error. will try again in 15 seconds.")
+					print(datetime.datetime.now().strftime("%Hh%Mm%Ss"), "unexpected error. Will try again in 15 seconds.")
 					time.sleep(15)
 		
 	def recorderAlive(self):
@@ -134,15 +164,19 @@ class TwitchRecorder:
 				print("Streamer not found.")
 				time.sleep(self.refresh)
 			elif status == 3:
-				print(datetime.datetime.now().strftime("%Hh%Mm%Ss")," ","unexpected error. will try again in 15 seconds.")
+				print(datetime.datetime.now().strftime("%Hh%Mm%Ss"), "unexpected error. Will try again in 15 seconds.")
 				time.sleep(15)
 			elif status == 1:
 				print(self.version, "-", self.streamer, "currently offline, checking again in", self.refresh, "seconds.")
 				time.sleep(self.refresh)
 			elif status == 0:
 				print(self.streamer, "online. Stream recording in session.")
+
+				if self.osSleep:
+					self.osSleep.inhibit()
+
 				filename = datetime.datetime.now().strftime("%Y-%m-%d %Hh%Mm%Ss") + " - " + self.streamer + " - " + (info['stream']).get("channel").get("status") + ".mp4"
-				
+
 				# clean filename from unnecessary characters
 				filename = "".join(x for x in filename if x.isalnum() or x in [" ", "-", "_", "."])
 				
@@ -168,6 +202,10 @@ class TwitchRecorder:
 					else:
 						print("Skip fixing. File not found.")
 					print("Fixing is done.")
+
+				if self.osSleep:
+					self.osSleep.uninhibit()
+
 				print("Going back to checking...")
 				time.sleep(self.refresh)
 
@@ -208,7 +246,7 @@ def main(argv):
 	twitchRecorder.rootPath = options.path
 	twitchRecorder.recorderIPAddress = options.ip_address
 	twitchRecorder.recorderMACAddress = options.mac_address
-
+ 
 	twitchRecorder.run()
 
 if __name__ == "__main__":
