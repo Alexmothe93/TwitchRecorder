@@ -6,6 +6,7 @@
 # Version 0.4 : Add WindowsInhibitor class to prevent Windows to sleep/hibernate when recording, used refresh argument in watch mode to set time between 2 checks when recorder is alive, fixed some syntax faults
 # Version 0.4.1 : Watcher mode: waiting in seconds, not minutes...
 # Version 0.5 : Add logging features, verbose mode and update streamer status according to Twitch Kraken API returns
+# Version 0.6 : Adapt to Twitch v5 API due to v3 EOL
 
 import requests
 import os
@@ -45,7 +46,8 @@ class TwitchRecorder:
 
 	def __init__(self):
 		self.clientID = "jzkbprff40iqj646a697cyrvl0zt2m6" #Client ID of Twitch website
-		self.version = "0.5" #To increment to each modification
+		self.APIheaders = {"Client-ID" : self.clientID, "Accept" : "application/vnd.twitchtv.v5+json"}
+		self.version = "0.6" #To increment to each modification
 		self.osSleep = None
 		if os.name == 'nt':
 			self.osSleep = WindowsInhibitor()
@@ -55,13 +57,35 @@ class TwitchRecorder:
 		if(self.refresh < 15):
 			logging.warning("Check interval should not be lower than 15 seconds, set check interval to 15 seconds.")
 			self.refresh = 15
+		
+		self.streamerID = self.getStreamerID()
 
 		if self.mode == "recorder":
 			self.record()
 		elif self.mode == "watcher":
 			self.watch()
+		elif self.mode == "quit":
+			logging.info("Exiting.")
 		else:
 			logging.error("Mode not recognized, exiting.")
+			
+	def getStreamerID(self):
+		url = 'https://api.twitch.tv/kraken/users?login=' + self.streamerName
+		info = None
+		try:
+			r = requests.get(url, headers = self.APIheaders, timeout = 15)
+			r.raise_for_status()
+			info = r.json()
+			if info['_total'] == 0:
+				logging.error("No streamer called "+self.streamerName+" found.")
+				self.mode = "quit"
+			else:
+				if info['_total'] > 1:
+					logging.warning("ID search for "+self.streamerName+" didn't return an unique result. First result will be used.")
+				return info['users'][0]['_id']
+		except requests.exceptions.RequestException as e:
+			logging.error("An error has occurred when trying to get streamer id.")
+			logging.debug(e)
 
 	def record(self):
 		# path to recording stream
@@ -98,7 +122,7 @@ class TwitchRecorder:
 			except Exception as e:
 				logging.error(e)
 
-		logging.info("Checking for "+self.streamer+" every "+str(self.refresh)+" seconds. Record with "+self.quality+" quality.")
+		logging.info("Checking for "+self.streamerName+" every "+str(self.refresh)+" seconds. Record with "+self.quality+" quality.")
 		self.loopcheck()
 
 	def watch(self):
@@ -107,13 +131,13 @@ class TwitchRecorder:
 				logging.info("Recorder is alive, waiting "+str(self.refresh)+" seconds.")
 				time.sleep(self.refresh)
 			else:
-				logging.info("Recorder is sleeping, checking if "+self.streamer+" is online.")
+				logging.info("Recorder is sleeping, checking if "+self.streamerName+" is online.")
 				status, info = self.checkStreamer()
 				if status == 0:
-					logging.info(self.streamer+" is online.")
+					logging.info(self.streamerName+" is online.")
 					self.wakeRecorder()
 				elif status == 1:
-					logging.info(self.streamer+" currently offline or not found, checking again in "+str(self.refresh)+" seconds.")
+					logging.info(self.streamerName+" currently offline, checking again in "+str(self.refresh)+" seconds.")
 					time.sleep(self.refresh)
 				else:
 					logging.error("Unexpected error. Will try again in 15 seconds.")
@@ -134,13 +158,13 @@ class TwitchRecorder:
 
 	def checkStreamer(self):
 		# 0: Online
-		# 1: Offline or not found
+		# 1: Offline
 		# 2: Error
-		url = 'https://api.twitch.tv/kraken/streams/' + self.streamer
+		url = 'https://api.twitch.tv/kraken/streams/' + self.streamerID
 		info = None
 		status = 2
 		try:
-			r = requests.get(url, headers = {"Client-ID" : self.clientID}, timeout = 15)
+			r = requests.get(url, headers = self.APIheaders, timeout = 15)
 			r.raise_for_status()
 			info = r.json()
 			if info['stream'] == None:
@@ -160,15 +184,15 @@ class TwitchRecorder:
 				logging.error("Unexpected error. Will try again in 15 seconds.")
 				time.sleep(15)
 			elif status == 1:
-				logging.info(self.streamer+" currently offline or not found, checking again in "+str(self.refresh)+" seconds.")
+				logging.info(self.streamerName+" currently offline, checking again in "+str(self.refresh)+" seconds.")
 				time.sleep(self.refresh)
 			elif status == 0:
-				logging.info(self.streamer+" is online. Stream recording in session.")
+				logging.info(self.streamerName+" is online. Stream recording in session.")
 
 				if self.osSleep:
 					self.osSleep.inhibit()
 
-				filename = datetime.datetime.now().strftime("%Y-%m-%d %Hh%Mm%Ss") + " - " + self.streamer + " - " + (info['stream']).get("channel").get("status") + ".mp4"
+				filename = datetime.datetime.now().strftime("%Y-%m-%d %Hh%Mm%Ss")+" - "+self.streamerName+" - "+(info['stream']).get("channel").get("status")+".mp4"
 
 				# clean filename from unnecessary characters
 				filename = "".join(x for x in filename if x.isalnum() or x in [" ", "-", "_", "."])
@@ -176,7 +200,7 @@ class TwitchRecorder:
 				recordingFilename = os.path.join(self.recordingPath, filename)
 
 				# start streamlink process
-				subprocess.call(["streamlink", "--twitch-disable-hosting", "--twitch-oauth-token", self.OAuthToken, "twitch.tv/" + self.streamer, self.quality, "-o", recordingFilename])
+				subprocess.call(["streamlink", "--twitch-disable-hosting", "--twitch-oauth-token", self.OAuthToken, "twitch.tv/" + self.streamerName, self.quality, "-o", recordingFilename])
 
 				logging.info("Recording stream is done.")
 				logging.info("Moving file...")
@@ -229,12 +253,11 @@ def main(argv):
 
 	while options.streamer == None or options.streamer == "":
 		options.streamer = input("Please specify the streamer to watch: ")
-	twitchRecorder.streamer = options.streamer
+	twitchRecorder.streamerName = options.streamer
 
 	twitchRecorder.OAuthToken = options.oauth_token
 	twitchRecorder.refresh = options.refresh
 	twitchRecorder.mode = options.mode
-	twitchRecorder.streamer = options.streamer
 	twitchRecorder.quality = options.quality
 	twitchRecorder.fixVideos = options.fix_videos
 	twitchRecorder.ffmpegPath = options.ffmpeg
