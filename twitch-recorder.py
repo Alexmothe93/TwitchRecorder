@@ -7,6 +7,9 @@
 # Version 0.4.1 : Watcher mode: waiting in seconds, not minutes...
 # Version 0.5 : Add logging features, verbose mode and update streamer status according to Twitch Kraken API returns
 # Version 0.6 : Adapt to Twitch v5 API due to v3 EOL
+# Version 0.7 : Add streamlink option to disable Twitch ads
+# Version 0.8 : Fix streamlink not exiting after some streams ending
+# Version 0.9 : The script retries every 10 minutes when the streamer isn't found (potentially banned), and retry immediatly when a stream ends
 
 import requests
 import os
@@ -47,7 +50,7 @@ class TwitchRecorder:
 	def __init__(self):
 		self.clientID = "jzkbprff40iqj646a697cyrvl0zt2m6" #Client ID of Twitch website
 		self.APIheaders = {"Client-ID" : self.clientID, "Accept" : "application/vnd.twitchtv.v5+json"}
-		self.version = "0.6" #To increment to each modification
+		self.version = "0.9" #To increment to each modification
 		self.osSleep = None
 		if os.name == 'nt':
 			self.osSleep = WindowsInhibitor()
@@ -64,28 +67,27 @@ class TwitchRecorder:
 			self.record()
 		elif self.mode == "watcher":
 			self.watch()
-		elif self.mode == "quit":
-			logging.info("Exiting.")
 		else:
 			logging.error("Mode not recognized, exiting.")
 			
 	def getStreamerID(self):
 		url = 'https://api.twitch.tv/kraken/users?login=' + self.streamerName
 		info = None
-		try:
-			r = requests.get(url, headers = self.APIheaders, timeout = 15)
-			r.raise_for_status()
-			info = r.json()
-			if info['_total'] == 0:
-				logging.error("No streamer called "+self.streamerName+" found.")
-				self.mode = "quit"
-			else:
-				if info['_total'] > 1:
-					logging.warning("ID search for "+self.streamerName+" didn't return an unique result. First result will be used.")
-				return info['users'][0]['_id']
-		except requests.exceptions.RequestException as e:
-			logging.error("An error has occurred when trying to get streamer id.")
-			logging.debug(e)
+		while info == None or info['_total'] == 0:
+			try:
+				r = requests.get(url, headers = self.APIheaders, timeout = 15)
+				r.raise_for_status()
+				info = r.json()
+				if info['_total'] == 0:
+					logging.error("No streamer called "+self.streamerName+" found. Retry in 10 minutes.")
+					time.sleep(600)
+				else:
+					if info['_total'] > 1:
+						logging.warning("ID search for "+self.streamerName+" didn't return an unique result. First result will be used.")
+					return info['users'][0]['_id']
+			except requests.exceptions.RequestException as e:
+				logging.error("An error has occurred when trying to get streamer id.")
+				logging.debug(e)
 
 	def record(self):
 		# path to recording stream
@@ -200,7 +202,7 @@ class TwitchRecorder:
 				recordingFilename = os.path.join(self.recordingPath, filename)
 
 				# start streamlink process
-				subprocess.call(["streamlink", "--twitch-disable-hosting", "--twitch-oauth-token", self.OAuthToken, "twitch.tv/" + self.streamerName, self.quality, "-o", recordingFilename])
+				subprocess.call(["streamlink", "--twitch-disable-hosting", "--twitch-disable-ads", "twitch.tv/" + self.streamerName, self.quality, "-o", recordingFilename])
 
 				logging.info("Recording stream is done.")
 				logging.info("Moving file...")
@@ -224,7 +226,7 @@ class TwitchRecorder:
 					self.osSleep.uninhibit()
 
 				logging.info("Going back to checking...")
-				time.sleep(self.refresh)
+#				time.sleep(self.refresh)
 
 def main(argv):
 	twitchRecorder = TwitchRecorder()
