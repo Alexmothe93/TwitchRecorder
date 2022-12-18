@@ -10,6 +10,7 @@
 # Version 0.7 : Add streamlink option to disable Twitch ads
 # Version 0.8 : Fix streamlink not exiting after some streams ending
 # Version 0.9 : The script retries every 10 minutes when the streamer isn't found (potentially banned), and retry immediatly when a stream ends
+# Version 0.10 : Adaptation to Twitch Helix API, errors are more explicit in non verbose mode, fix an issue on videos fix feature
 
 import requests
 import os
@@ -48,17 +49,29 @@ class WindowsInhibitor:
 class TwitchRecorder:
 
 	def __init__(self):
-		self.clientID = "jzkbprff40iqj646a697cyrvl0zt2m6" #Client ID of Twitch website
-		self.APIheaders = {"Client-ID" : self.clientID, "Accept" : "application/vnd.twitchtv.v5+json"}
-		self.version = "0.9" #To increment to each modification
+		self.version = "0.10" #To increment to each modification
+
+		self.clientID = ""
+		self.clientSecret = ""
+		self.OAuthToken = ""
+		self.refresh = 30
+		self.mode = "recorder"
+		self.quality = "best"
+		self.fixVideos = False
+		self.ffmpegPath = "C:\ffmpeg\bin\ffmpeg.exe"
+		self.rootPath = "C:\TwitchRecorder"
+		self.recorderIPAddress = ""
+		self.recorderMACAddress = ""
 		self.osSleep = None
 		if os.name == 'nt':
 			self.osSleep = WindowsInhibitor()
 
 	def run(self):
-		# make sure the interval to check user availability is not less than 15 seconds
-		if(self.refresh < 15):
-			logging.warning("Check interval should not be lower than 15 seconds, set check interval to 15 seconds.")
+		self.APIheaders = {"Client-ID" : self.clientID, "Authorization" : "Bearer "+self.OAuthToken}
+
+		# Make sure the interval to check user availability is not too low
+		if(self.refresh < 1):
+			logging.warning("Check interval should not be lower than 1 second, set check interval to 15 seconds.")
 			self.refresh = 15
 		
 		self.streamerID = self.getStreamerID()
@@ -69,46 +82,60 @@ class TwitchRecorder:
 			self.watch()
 		else:
 			logging.error("Mode not recognized, exiting.")
-			
+
+	def updateOAuthToken(self):
+		url = 'https://id.twitch.tv/oauth2/token'
+		try:
+			r = requests.post(url, data = {"client_id" : self.clientID, "client_secret" : self.clientSecret, "grant_type" : "client_credentials"})
+			r.raise_for_status()
+			self.OAuthToken = r.json()["access_token"]
+			self.APIheaders = {"Client-ID" : self.clientID, "Authorization" : "Bearer "+self.OAuthToken}
+		except requests.exceptions.RequestException as e:
+			logging.error("Unable to authenticate, check client ID and client secret, error returned: "+str(e))
+
 	def getStreamerID(self):
-		url = 'https://api.twitch.tv/kraken/users?login=' + self.streamerName
+		url = 'https://api.twitch.tv/helix/users?login=' + self.streamerName
 		info = None
 		while info == None or info['_total'] == 0:
 			try:
 				r = requests.get(url, headers = self.APIheaders, timeout = 15)
 				r.raise_for_status()
 				info = r.json()
-				if info['_total'] == 0:
+				logging.debug(info)
+				if len(info['data']) == 0:
 					logging.error("No streamer called "+self.streamerName+" found. Retry in 10 minutes.")
 					time.sleep(600)
 				else:
-					if info['_total'] > 1:
+					if len(info['data']) > 1:
 						logging.warning("ID search for "+self.streamerName+" didn't return an unique result. First result will be used.")
-					return info['users'][0]['_id']
+					return info['data'][0]['id']
 			except requests.exceptions.RequestException as e:
-				logging.error("An error has occurred when trying to get streamer id.")
-				logging.debug(e)
+				if r.status_code == 401:
+					logging.info("Authentification needed.")
+					self.updateOAuthToken()
+				else:
+					logging.error("An error has occurred when trying to get streamer id: "+str(e))
 
 	def record(self):
-		# path to recording stream
+		# Path to recording stream
 		self.recordingPath = os.path.join(self.rootPath, "recording")
 
-		# path to recorded stream
+		# Path to recorded stream
 		self.recordedPath = os.path.join(self.rootPath, "recorded")
 
-		# path to finished video, errors removed
+		# Path to finished video, errors removed
 		self.processedPath = os.path.join(self.rootPath, "processed")
 
-		# create directory for recordedPath and processedPath if not exist
+		# Create directories for recordingPath, recordedPath and processedPath if not exist
 		if(os.path.isdir(self.recordingPath) is False):
 			os.makedirs(self.recordingPath)
 		if(os.path.isdir(self.recordedPath) is False):
 			os.makedirs(self.recordedPath)
-
 		if self.fixVideos:
 			if(os.path.isdir(self.processedPath) is False):
 				os.makedirs(self.processedPath)
-			# fix videos from previous recording session
+			
+			# Fix videos from previous recording session
 			try:
 				videoList = [f for f in os.listdir(self.recordedPath) if os.path.isfile(os.path.join(self.recordedPath, f))]
 				if(len(videoList) > 0):
@@ -162,20 +189,23 @@ class TwitchRecorder:
 		# 0: Online
 		# 1: Offline
 		# 2: Error
-		url = 'https://api.twitch.tv/kraken/streams/' + self.streamerID
+		url = 'https://api.twitch.tv/helix/streams?user_id='+self.streamerID
 		info = None
 		status = 2
 		try:
 			r = requests.get(url, headers = self.APIheaders, timeout = 15)
 			r.raise_for_status()
 			info = r.json()
-			if info['stream'] == None:
+			if len(info['data']) == 0:
 				status = 1
-			else:
+			elif len(info['data']) == 1:
 				status = 0
 		except requests.exceptions.RequestException as e:
-			logging.error("An error has occurred when trying to get streamer status.")
-			logging.debug(e)
+			if r.status_code == 401:
+				logging.info("Authentification needed.")
+				self.updateOAuthToken()
+			else:
+				logging.error("An error has occurred when trying to get streamer status: "+str(e))
 
 		return status, info
 
@@ -194,14 +224,14 @@ class TwitchRecorder:
 				if self.osSleep:
 					self.osSleep.inhibit()
 
-				filename = datetime.datetime.now().strftime("%Y-%m-%d %Hh%Mm%Ss")+" - "+self.streamerName+" - "+(info['stream']).get("channel").get("status")+".mp4"
+				filename = datetime.datetime.now().strftime("%Y-%m-%d %Hh%Mm%Ss")+" - "+self.streamerName+" - "+(info['data'][0]["title"])+".mp4"
 
-				# clean filename from unnecessary characters
+				# Clean filename from unnecessary characters
 				filename = "".join(x for x in filename if x.isalnum() or x in [" ", "-", "_", "."])
 
 				recordingFilename = os.path.join(self.recordingPath, filename)
 
-				# start streamlink process
+				# Start streamlink process
 				subprocess.call(["streamlink", "--twitch-disable-hosting", "--twitch-disable-ads", "twitch.tv/" + self.streamerName, self.quality, "-o", recordingFilename])
 
 				logging.info("Recording stream is done.")
@@ -212,10 +242,10 @@ class TwitchRecorder:
 					logging.error("Error when moving file.")
 				if self.fixVideos:
 					logging.info("Fixing video file.")
-					if(os.path.exists(recordedFilename) is True):
+					if(os.path.exists(os.path.join(self.recordedPath, filename)) is True):
 						try:
-							subprocess.call([self.ffmpegPath, '-err_detect', 'ignore_err', '-i', recordedFilename, '-c', 'copy', os.path.join(self.processedPath, filename)])
-							os.remove(recordedFilename)
+							subprocess.call([self.ffmpegPath, '-err_detect', 'ignore_err', '-i', os.path.join(self.recordedPath, filename), '-c', 'copy', os.path.join(self.processedPath, filename)])
+							os.remove(os.path.join(self.recordedPath, filename))
 						except Exception as e:
 							logging.error(e)
 					else:
@@ -226,14 +256,15 @@ class TwitchRecorder:
 					self.osSleep.uninhibit()
 
 				logging.info("Going back to checking...")
-#				time.sleep(self.refresh)
 
 def main(argv):
 	twitchRecorder = TwitchRecorder()
 
-	args = configargparse.ArgParser(default_config_files=['twitch-recorder.conf'], description="Record automatically Twitch streams.\r\n")
-	args.add("-c", "--config", dest='config_file', is_config_file=True, default='twitch-recorder.conf', type=str)
-	args.add("-o", "--oauth-token", help="OAuth Token from your Twitch account.")
+	args = configargparse.ArgParser(default_config_files=['twitch-recorder.conf'], description="Records automatically lives from a Twitch streamer.\r\n")
+	args.add("-conf", "--config", dest='config_file', is_config_file=True, default='twitch-recorder.conf', type=str)
+	args.add("-cid", "--client-id", help="Client ID of the registered Twitch app.")
+	args.add("-sec", "--client-secret", help="Client secret of the registered Twitch app.")
+	args.add("-o", "--oauth-token", help="OAuth Token to use with registered Twitch app.")
 	args.add("-s", "--streamer", default=None, help="Indicate the streamer to watch.")
 	args.add("-r", "--refresh", help="Time between 2 checks.", type=int)
 	args.add("-p", "--path", help="Path to save the records.")
@@ -245,7 +276,6 @@ def main(argv):
 	args.add("-q", "--quality", help="Specify the quality to record (examples: best, worst, audio_only, 720p60, 1080p).")
 	args.add("-v", "--verbose", help="Debug mode.", action='store_true')
 	options = args.parse_args()
-
 	if options.verbose:
 		logging.basicConfig(level=logging.DEBUG, format='[%(levelname)s] v'+twitchRecorder.version+' %(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 		logging.debug(options)
@@ -257,6 +287,8 @@ def main(argv):
 		options.streamer = input("Please specify the streamer to watch: ")
 	twitchRecorder.streamerName = options.streamer
 
+	twitchRecorder.clientID = options.client_id
+	twitchRecorder.clientSecret = options.client_secret
 	twitchRecorder.OAuthToken = options.oauth_token
 	twitchRecorder.refresh = options.refresh
 	twitchRecorder.mode = options.mode

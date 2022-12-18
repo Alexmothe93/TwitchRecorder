@@ -1,7 +1,8 @@
 # Config file for Twitch Recorder
 
 # General config
-;oauth-token=
+client-id=
+client-secret=
 ;streamer=
 refresh=30
 mode=recorder
