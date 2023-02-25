@@ -11,6 +11,7 @@
 # Version 0.8 : Fix streamlink not exiting after some streams ending
 # Version 0.9 : The script retries every 10 minutes when the streamer isn't found (potentially banned), and retry immediatly when a stream ends
 # Version 0.10 : Adaptation to Twitch Helix API, errors are more explicit in non verbose mode, fix an issue on videos fix feature
+# Version 0.11 : Fix crashes when the network connection fail
 
 import requests
 import os
@@ -49,7 +50,7 @@ class WindowsInhibitor:
 class TwitchRecorder:
 
 	def __init__(self):
-		self.version = "0.10" #To increment to each modification
+		self.version = "0.11" #To increment to each modification
 
 		self.clientID = ""
 		self.clientSecret = ""
@@ -109,12 +110,16 @@ class TwitchRecorder:
 					if len(info['data']) > 1:
 						logging.warning("ID search for "+self.streamerName+" didn't return an unique result. First result will be used.")
 					return info['data'][0]['id']
-			except requests.exceptions.RequestException as e:
+			except requests.exceptions.HTTPError as e:
 				if r.status_code == 401:
-					logging.info("Authentification needed.")
+					logging.info("Authentication required.")
 					self.updateOAuthToken()
 				else:
-					logging.error("An error has occurred when trying to get streamer id: "+str(e))
+					logging.error("An HTTP error occurred while trying to get the streamer id: "+str(e))
+					time.sleep(1)
+			except requests.exceptions.RequestException as e:
+				logging.error("An error occurred while trying to get the streamer id: "+str(e))
+				time.sleep(1)
 
 	def record(self):
 		# Path to recording stream
@@ -200,12 +205,14 @@ class TwitchRecorder:
 				status = 1
 			elif len(info['data']) == 1:
 				status = 0
-		except requests.exceptions.RequestException as e:
+		except requests.exceptions.HTTPError as e:
 			if r.status_code == 401:
-				logging.info("Authentification needed.")
+				logging.info("Authentication required.")
 				self.updateOAuthToken()
 			else:
-				logging.error("An error has occurred when trying to get streamer status: "+str(e))
+				logging.error("An HTTP error occurred while trying to get the streamer status: "+str(e))
+		except requests.exceptions.RequestException as e:
+			logging.error("An error occurred while trying to get the streamer status: "+str(e))
 
 		return status, info
 
