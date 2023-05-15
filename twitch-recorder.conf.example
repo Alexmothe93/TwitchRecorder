@@ -8,6 +8,7 @@ refresh=30
 mode=recorder
 
 # Recorder config
+streamlink="C:\Program Files\Streamlink\bin\streamlink.exe"
 ffmpeg=C:\ffmpeg\bin\ffmpeg.exe
 path=C:\TwitchRecorder
 quality=best

@@ -12,6 +12,7 @@
 # Version 0.9 : The script retries every 10 minutes when the streamer isn't found (potentially banned), and retry immediatly when a stream ends
 # Version 0.10 : Adaptation to Twitch Helix API, errors are more explicit in non verbose mode, fix an issue on videos fix feature
 # Version 0.11 : Fix crashes when the network connection fail
+# Version 0.12 : Added streamlink path argument to fix a potential issue of selecting the wrong path
 
 import requests
 import os
@@ -50,7 +51,7 @@ class WindowsInhibitor:
 class TwitchRecorder:
 
 	def __init__(self):
-		self.version = "0.11" #To increment to each modification
+		self.version = "0.12" #To increment to each modification
 
 		self.clientID = ""
 		self.clientSecret = ""
@@ -59,6 +60,7 @@ class TwitchRecorder:
 		self.mode = "recorder"
 		self.quality = "best"
 		self.fixVideos = False
+		self.streamlinkPath = "C:\Program Files\Streamlink\bin\streamlink.exe"
 		self.ffmpegPath = "C:\ffmpeg\bin\ffmpeg.exe"
 		self.rootPath = "C:\TwitchRecorder"
 		self.recorderIPAddress = ""
@@ -239,7 +241,7 @@ class TwitchRecorder:
 				recordingFilename = os.path.join(self.recordingPath, filename)
 
 				# Start streamlink process
-				subprocess.call(["streamlink", "--twitch-disable-hosting", "--twitch-disable-ads", "twitch.tv/" + self.streamerName, self.quality, "-o", recordingFilename])
+				subprocess.call([self.streamlinkPath, "--twitch-disable-hosting", "--twitch-disable-ads", "twitch.tv/" + self.streamerName, self.quality, "-o", recordingFilename])
 
 				logging.info("Recording stream is done.")
 				logging.info("Moving file...")
@@ -276,6 +278,7 @@ def main(argv):
 	args.add("-r", "--refresh", help="Time between 2 checks.", type=int)
 	args.add("-p", "--path", help="Path to save the records.")
 	args.add("-fix", "--fix-videos", action='store_true', default=False, help="Fix videos with ffmpeg.")
+	args.add("-sl", "--streamlink", help="Path to the streamlink binary.")
 	args.add("-f", "--ffmpeg", help="Path to the ffmpeg binary.")
 	args.add("-i", "--ip-address", help="Recorder IP address.")
 	args.add("-ma", "--mac-address", help="Recorder MAC address.")
@@ -301,6 +304,7 @@ def main(argv):
 	twitchRecorder.mode = options.mode
 	twitchRecorder.quality = options.quality
 	twitchRecorder.fixVideos = options.fix_videos
+	twitchRecorder.streamlinkPath = options.streamlink
 	twitchRecorder.ffmpegPath = options.ffmpeg
 	twitchRecorder.rootPath = options.path
 	twitchRecorder.recorderIPAddress = options.ip_address
