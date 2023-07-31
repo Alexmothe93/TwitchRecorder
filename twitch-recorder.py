@@ -186,8 +186,8 @@ class TwitchRecorder:
 						logging.info(streamerID+" is currently offline.")
 					else:
 						logging.error("Unexpected error.")
-				print("Checking again in "+str(self.refresh)+" seconds.")
-				time.sleep(self.refresh)
+			print("Checking again in "+str(self.refresh)+" seconds.")
+			time.sleep(self.refresh)
 
 	def recorderAlive(self):
 		if os.system("ping -c 1 " + self.recorderIPAddress + " > /dev/null") == 0:
