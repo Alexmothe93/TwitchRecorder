@@ -176,7 +176,7 @@ class TwitchRecorder:
 			else:
 				logging.info("Recorder is sleeping.")
 				for streamerID in streamersIDs:
-					logging.info("Checking if "+streamerID+" is online...")
+					logging.debug("Checking if "+streamerID+" is online...")
 					status, info = self.checkStreamer(streamerID)
 					if status == 0:
 						logging.info(streamerID+" is online.")
