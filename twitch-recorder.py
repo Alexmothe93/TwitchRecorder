@@ -23,6 +23,7 @@ import subprocess
 import datetime
 import configargparse
 import logging
+from multiprocessing import Process
 
 class WindowsInhibitor:
 	'''Prevent OS sleep/hibernate in windows; code from:
@@ -66,6 +67,7 @@ class TwitchRecorder:
 		self.recorderIPAddress = ""
 		self.recorderMACAddress = ""
 		self.osSleep = None
+		self.procs = []
 		if os.name == 'nt':
 			self.osSleep = WindowsInhibitor()
 
@@ -77,8 +79,6 @@ class TwitchRecorder:
 			logging.warning("Check interval should not be lower than 1 second, set check interval to 15 seconds.")
 			self.refresh = 15
 		
-		self.streamerID = self.getStreamerID()
-
 		if self.mode == "recorder":
 			self.record()
 		elif self.mode == "watcher":
@@ -96,8 +96,8 @@ class TwitchRecorder:
 		except requests.exceptions.RequestException as e:
 			logging.error("Unable to authenticate, check client ID and client secret, error returned: "+str(e))
 
-	def getStreamerID(self):
-		url = 'https://api.twitch.tv/helix/users?login=' + self.streamerName
+	def getStreamerID(self, streamerName):
+		url = 'https://api.twitch.tv/helix/users?login=' + streamerName
 		info = None
 		while info == None or info['_total'] == 0:
 			try:
@@ -106,11 +106,11 @@ class TwitchRecorder:
 				info = r.json()
 				logging.debug(info)
 				if len(info['data']) == 0:
-					logging.error("No streamer called "+self.streamerName+" found. Retry in 10 minutes.")
+					logging.error("No streamer called "+streamerName+" found. Retry in 10 minutes.")
 					time.sleep(600)
 				else:
 					if len(info['data']) > 1:
-						logging.warning("ID search for "+self.streamerName+" didn't return an unique result. First result will be used.")
+						logging.warning("ID search for "+streamerName+" didn't return an unique result. First result will be used.")
 					return info['data'][0]['id']
 			except requests.exceptions.HTTPError as e:
 				if r.status_code == 401:
@@ -158,26 +158,36 @@ class TwitchRecorder:
 			except Exception as e:
 				logging.error(e)
 
-		logging.info("Checking for "+self.streamerName+" every "+str(self.refresh)+" seconds. Record with "+self.quality+" quality.")
-		self.loopcheck()
+		for streamer in self.streamers:
+			proc = Process(target=self.loopcheckStreamer, args=(streamer,))
+			self.procs.append(proc)
+			proc.start()
+
+		for proc in self.procs:
+			proc.join()
 
 	def watch(self):
+		streamersIDs = []
+		for streamer in self.streamers:
+			streamersIDs.append(self.getStreamerID(streamer))
 		while True:
 			if self.recorderAlive():
-				logging.info("Recorder is alive, waiting "+str(self.refresh)+" seconds.")
-				time.sleep(self.refresh)
+				logging.info("Recorder is alive.")
 			else:
-				logging.info("Recorder is sleeping, checking if "+self.streamerName+" is online.")
-				status, info = self.checkStreamer()
-				if status == 0:
-					logging.info(self.streamerName+" is online.")
-					self.wakeRecorder()
-				elif status == 1:
-					logging.info(self.streamerName+" currently offline, checking again in "+str(self.refresh)+" seconds.")
-					time.sleep(self.refresh)
-				else:
-					logging.error("Unexpected error. Will try again in 15 seconds.")
-					time.sleep(15)
+				logging.info("Recorder is sleeping.")
+				for streamerID in streamersIDs:
+					logging.info("Checking if "+streamerID+" is online...")
+					status, info = self.checkStreamer(streamerID)
+					if status == 0:
+						logging.info(streamerID+" is online.")
+						self.wakeRecorder()
+						break
+					elif status == 1:
+						logging.info(streamerID+" is currently offline.")
+					else:
+						logging.error("Unexpected error.")
+				print("Checking again in "+str(self.refresh)+" seconds.")
+				time.sleep(self.refresh)
 
 	def recorderAlive(self):
 		if os.system("ping -c 1 " + self.recorderIPAddress + " > /dev/null") == 0:
@@ -192,11 +202,11 @@ class TwitchRecorder:
 			logging.info("Waiting for the recorder to wake up...")
 		logging.info("The recorder is awake.")
 
-	def checkStreamer(self):
+	def checkStreamer(self, streamerID):
 		# 0: Online
 		# 1: Offline
 		# 2: Error
-		url = 'https://api.twitch.tv/helix/streams?user_id='+self.streamerID
+		url = 'https://api.twitch.tv/helix/streams?user_id='+streamerID
 		info = None
 		status = 2
 		try:
@@ -218,17 +228,19 @@ class TwitchRecorder:
 
 		return status, info
 
-	def loopcheck(self):
+	def loopcheckStreamer(self, streamerName):
+		streamerID = self.getStreamerID(streamerName)
+		logging.info("Checking for "+streamerName+" every "+str(self.refresh)+" seconds. Record with "+self.quality+" quality.")
 		while True:
-			status, info = self.checkStreamer()
+			status, info = self.checkStreamer(streamerID)
 			if status == 2:
 				logging.error("Unexpected error. Will try again in 15 seconds.")
 				time.sleep(15)
 			elif status == 1:
-				logging.info(self.streamerName+" currently offline, checking again in "+str(self.refresh)+" seconds.")
+				logging.info(streamerName+" currently offline, checking again in "+str(self.refresh)+" seconds.")
 				time.sleep(self.refresh)
 			elif status == 0:
-				logging.info(self.streamerName+" is online. Stream recording in session.")
+				logging.info(streamerName+" is online. Stream recording in session.")
 
 				if self.osSleep:
 					self.osSleep.inhibit()
@@ -274,7 +286,7 @@ def main(argv):
 	args.add("-cid", "--client-id", help="Client ID of the registered Twitch app.")
 	args.add("-sec", "--client-secret", help="Client secret of the registered Twitch app.")
 	args.add("-o", "--oauth-token", help="OAuth Token to use with registered Twitch app.")
-	args.add("-s", "--streamer", default=None, help="Indicate the streamer to watch.")
+	args.add("-s", "--streamer", default=None, help="Indicate the streamer to watch.", action="append")
 	args.add("-r", "--refresh", help="Time between 2 checks.", type=int)
 	args.add("-p", "--path", help="Path to save the records.")
 	args.add("-fix", "--fix-videos", action='store_true', default=False, help="Fix videos with ffmpeg.")
@@ -295,7 +307,7 @@ def main(argv):
 
 	while options.streamer == None or options.streamer == "":
 		options.streamer = input("Please specify the streamer to watch: ")
-	twitchRecorder.streamerName = options.streamer
+	twitchRecorder.streamers = options.streamer
 
 	twitchRecorder.clientID = options.client_id
 	twitchRecorder.clientSecret = options.client_secret
