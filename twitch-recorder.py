@@ -52,7 +52,7 @@ class WindowsInhibitor:
 class TwitchRecorder:
 
 	def __init__(self):
-		self.version = "0.12" #To increment to each modification
+		self.version = "0.13" #To increment to each modification
 
 		self.clientID = ""
 		self.clientSecret = ""
@@ -186,7 +186,7 @@ class TwitchRecorder:
 						logging.info(streamerID+" is currently offline.")
 					else:
 						logging.error("Unexpected error.")
-			logging.info("Checking again in "+str(self.refresh)+" seconds.")
+			logging.debug("Waiting "+str(self.refresh)+" seconds...")
 			time.sleep(self.refresh)
 
 	def recorderAlive(self):
